@@ -5,3 +5,4 @@ notifications:
 
 jdk:
   - oraclejdk7
+  - openjdk7
