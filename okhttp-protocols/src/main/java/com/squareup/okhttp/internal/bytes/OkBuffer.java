@@ -53,7 +53,7 @@ public final class OkBuffer implements Source, Sink {
     return byteCount;
   }
 
-  /** Reads a byte from the front of this buffer and returns it. */
+  /** Removes a byte from the front of this buffer and returns it. */
   public byte readByte() {
     if (byteCount < 1) throw new IllegalArgumentException("byteCount < 1: " + byteCount);
 
@@ -75,7 +75,17 @@ public final class OkBuffer implements Source, Sink {
     return b;
   }
 
-  /** Reads a Big-Endian short from the front of this buffer and returns it. */
+  /** Returns the byte at {@code i}. */
+  public byte peekByte(long i) {
+    checkOffsetAndCount(byteCount, i, 1);
+    for (Segment s = head; true; s = s.next) {
+      int segmentByteCount = s.limit - s.pos;
+      if (i < segmentByteCount) return s.data[s.pos + (int) i];
+      i -= segmentByteCount;
+    }
+  }
+
+  /** Removes a Big-Endian short from the front of this buffer and returns it. */
   public short readShort() {
     if (byteCount < 2) throw new IllegalArgumentException("byteCount < 2: " + byteCount);
 
@@ -105,7 +115,7 @@ public final class OkBuffer implements Source, Sink {
     return (short) s;
   }
 
-  /** Reads a Big-Endian int from the front of this buffer and returns it. */
+  /** Removes a Big-Endian int from the front of this buffer and returns it. */
   public int readInt() {
     if (byteCount < 4) throw new IllegalArgumentException("byteCount < 4: " + byteCount);
 
@@ -136,6 +146,16 @@ public final class OkBuffer implements Source, Sink {
     }
 
     return i;
+  }
+
+  /** Removes a Little-Endian short from the front of this buffer and returns it. */
+  public int readShortLe() {
+    return Util.reverseBytesShort(readShort());
+  }
+
+  /** Removes a Little-Endian int from the front of this buffer and returns it. */
+  public int readIntLe() {
+    return Util.reverseBytesInt(readInt());
   }
 
   /** Removes {@code byteCount} bytes from this and returns them as a byte string. */
@@ -170,6 +190,24 @@ public final class OkBuffer implements Source, Sink {
 
     this.byteCount -= byteCount;
     return result;
+  }
+
+  /** Discards {@code byteCount} bytes from the head of this buffer. */
+  public void skip(long byteCount) {
+    checkOffsetAndCount(this.byteCount, 0, byteCount);
+
+    this.byteCount -= byteCount;
+    while (byteCount > 0) {
+      int toSkip = (int) Math.min(byteCount, head.limit - head.pos);
+      byteCount -= toSkip;
+      head.pos += toSkip;
+
+      if (head.pos == head.limit) {
+        Segment toRecycle = head;
+        head = toRecycle.pop();
+        SegmentPool.INSTANCE.recycle(toRecycle);
+      }
+    }
   }
 
   /** Appends {@code byteString} to this. */
@@ -352,15 +390,25 @@ public final class OkBuffer implements Source, Sink {
    * contain {@code b}.
    */
   public long indexOf(byte b) throws IOException {
+    return indexOf(b, 0);
+  }
+
+  /**
+   * Returns the index of {@code b} in this at or beyond {@code fromIndex}, or
+   * -1 if this buffer does not contain {@code b} in that range.
+   */
+  public long indexOf(byte b, long fromIndex) throws IOException {
     Segment s = head;
     if (s == null) return -1L;
     long offset = 0L;
     do {
       byte[] data = s.data;
-      for (int pos = s.pos, limit = s.limit; pos < limit; pos++) {
-        if (data[pos] == b) return offset + pos - s.pos;
+      for (long pos = s.pos + fromIndex, limit = s.limit; pos < limit; pos++) {
+        if (data[(int) pos] == b) return offset + pos - s.pos;
       }
-      offset += s.limit - s.pos;
+      int segmentByteCount = s.limit - s.pos;
+      offset += segmentByteCount;
+      fromIndex -= segmentByteCount;
       s = s.next;
     } while (s != head);
     return -1L;
